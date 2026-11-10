@@ -1,0 +1,28 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	entry := os.Getenv("BMCSHELL_ENTRY")
+	switch {
+	case strings.HasSuffix(entry, "_global"):
+		fmt.Println("BMCShell global tool is ready.")
+	case strings.HasSuffix(entry, "_session"):
+		ip := os.Getenv("BMCSHELL_TARGET_IP")
+		if ip == "" {
+			fmt.Fprintln(os.Stderr, "Select a BMC with bmc use first.")
+			os.Exit(1)
+		}
+		fmt.Println("Current BMC:", ip)
+		if model := os.Getenv("BMCSHELL_TARGET_MODEL"); model != "" {
+			fmt.Println("Model:", model)
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "Run the registered command through BMCShell.")
+		os.Exit(2)
+	}
+}

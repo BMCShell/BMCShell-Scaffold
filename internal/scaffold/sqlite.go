@@ -47,16 +47,20 @@ CREATE TABLE records (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL);
 PRAGMA user_version = 1;
 `
 
-func createBook(path string) error {
+func createBook(path string, m manifest) error {
 	name := strings.TrimSuffix(strings.ToLower(filepath.Base(path)), ".book.db")
+	title := m.DisplayName
+	if title == "" {
+		title = m.Name
+	}
 	return createSQLite(path, bookSchema, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO book_meta (id, schema_version, title, name, description,
 			content_version, updated_at, data_table, list_fields, search_fields, detail_enabled,
 			lookup_keys, content_field, field_options, order_by)
-			VALUES (1, 1, ?, ?, 'BMCShell 工具书', '1.0.0', ?, 'entries', '["id","name"]', '["name"]', 1,
-			'[{"name":"id","option":"--id","fields":["id"]},{"name":"name","option":"--name","fields":["name"],"positional":true}]',
+			VALUES (1, 1, ?, ?, ?, ?, ?, 'entries', '["id","name"]', '["name"]', 1,
+			'[{"name":"id","option":"--id","fields":["id"],"positional":true},{"name":"name","option":"--name","fields":["name"]}]',
 			'content', '{"id":{"title":"ID","format":"integer","width":6},"name":{"title":"名称","width":48}}', '["id"]')`,
-			name, name, time.Now().UTC().Format(time.RFC3339))
+			title, name, m.Summary, m.Version, time.Now().UTC().Format(time.RFC3339))
 		if err != nil {
 			return err
 		}

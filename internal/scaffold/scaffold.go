@@ -22,6 +22,9 @@ var packScript []byte
 //go:embed templates/check-identity.ps1
 var identityScript []byte
 
+//go:embed templates/test-book.ps1
+var bookTestScript []byte
+
 //go:embed templates/build.ps1
 var buildScript []byte
 
@@ -183,7 +186,10 @@ func create(directory string, m manifest, commandSlug string, members []string) 
 	cmd.Dir = stage
 	for _, variable := range os.Environ() {
 		key, _, _ := strings.Cut(variable, "=")
-		if !strings.EqualFold(key, "GIT_DIR") && !strings.EqualFold(key, "GIT_WORK_TREE") {
+		// Keep the new repository and its object store inside the staging directory.
+		switch strings.ToUpper(key) {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY":
+		default:
 			cmd.Env = append(cmd.Env, variable)
 		}
 	}
@@ -260,9 +266,12 @@ func blueprint(m manifest, id, slug string, members []string) (manifest, map[str
 		topics["tool."+shellSession] = commandTopic("使用 Bash 读取同一组会话变量。", shellSession)
 		usage = global
 	case "book":
-		m.Summary = "使用 v2 Book SQLite 格式的工具书示例。"
-		m.Data = "book/book-" + slug + ".book.db"
-		usage = "bmc book " + id + " -s 示例"
+		m.Summary = "查询 SQLite 工具书中的示例条目。"
+		dataName := m.ShortName
+		if dataName == "" {
+			dataName = slug
+		}
+		m.Data = "book/" + dataName + ".book.db"
 	case "library":
 		m.Summary = "可按键查询和同步的 SQLite 数据库示例。"
 		m.Data = "library/" + slug + ".library.db"
@@ -297,7 +306,11 @@ func blueprint(m manifest, id, slug string, members []string) (manifest, map[str
 	if m.Description != nil && strings.TrimSpace(*m.Description) != "" {
 		m.Summary = *m.Description
 	}
-	topics["package"] = commandTopic(m.Summary, usage)
+	if m.Type == "book" {
+		topics["package"] = bookTopic(m)
+	} else {
+		topics["package"] = commandTopic(m.Summary, usage)
+	}
 	return m, topics, nil
 }
 
@@ -305,12 +318,36 @@ func commandTopic(summary, usage string) topic {
 	return topic{Summary: summary, Usage: []string{usage}, Examples: []example{{Command: usage, Description: summary}}}
 }
 
+func bookTopic(m manifest) topic {
+	name := m.ShortName
+	if name == "" {
+		// Legacy packages use the full manifest name, which may contain shell metacharacters.
+		name = "'" + strings.ReplaceAll(m.Name, "'", "'\"'\"'") + "'"
+	}
+	command := "bmc book " + name
+	examples := []example{
+		{Command: command + " -l", Description: "按 ID 列出条目。"},
+		{Command: command + " -s '示例'", Description: "按名称搜索示例条目。"},
+		{Command: command + " --id 1", Description: "按 ID 查看正文。"},
+		{Command: command + " 1", Description: "用位置参数按 ID 查看正文。"},
+		{Command: command + " --name '示例条目'", Description: "按完整名称查看正文。"},
+	}
+	result := topic{Summary: m.Summary, Examples: examples}
+	for _, item := range examples {
+		result.Usage = append(result.Usage, item.Command)
+	}
+	return result
+}
+
 func populate(root string, m manifest, topics map[string]topic) error {
 	files := map[string][]byte{
-		"README.md":                  []byte(readme(m, topics["package"].Usage[0])),
+		"README.md":                  []byte(readme(m, topics["package"].Usage)),
 		".gitignore":                 []byte("/dist/\n/bin/\n"),
 		"scripts/pack-release.ps1":   packScript,
 		"scripts/check-identity.ps1": identityScript,
+	}
+	if m.Type == "book" {
+		files["tests/Test-Book.ps1"] = bookTestScript
 	}
 	if m.Type == "toolplugin" {
 		files[".gitattributes"] = []byte("*.sh text eol=lf\n")
@@ -344,7 +381,7 @@ func populate(root string, m manifest, topics map[string]topic) error {
 		if m.Type == "library" {
 			return createLibrary(path, m.ID)
 		}
-		return createBook(path)
+		return createBook(path, m)
 	case "theme":
 		return writeJSON(root, m.Data, map[string]string{"prefix": "[BMC {ip}] "})
 	}
@@ -367,7 +404,7 @@ func write(root, rel string, data []byte) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-func readme(m manifest, usage string) string {
+func readme(m manifest, commands []string) string {
 	var out strings.Builder
 	title := m.Name
 	if m.DisplayName != "" {
@@ -382,7 +419,8 @@ func readme(m manifest, usage string) string {
 		out.WriteString("在配置好 Go 的 Windows x64 环境中构建工具。\n\n```powershell\npwsh -File ./scripts/build.ps1\n```\n\n")
 	}
 	if m.Type == "book" {
-		fmt.Fprintf(&out, "使用 SQLite 工具编辑 `%s`，保留 v2 `book_meta` 表和查询字段定义。\n\n", m.Data)
+		fmt.Fprintf(&out, "使用 SQLite 工具编辑 `%s`。保留 `PRAGMA user_version = 1` 和 `book_meta` 中 `id = 1`、`schema_version = 1` 的唯一一行。示例数据位于 `entries` 表。修改查询字段时同步更新 `book_meta`。\n\n", m.Data)
+		out.WriteString("在 PowerShell 中运行工具书测试。测试使用独立的 `BMCSHELL_HOME` 安装并验证示例查询。替换 SQLite 示例数据后，同步更新 `tests/Test-Book.ps1` 中的预期结果。\n\n```powershell\npwsh -File ./tests/Test-Book.ps1 -BmcExe 'D:\\tools\\BMCShell.exe'\n```\n\n")
 	}
 	if m.Type == "library" {
 		fmt.Fprintf(&out, "使用 SQLite 工具编辑 `%s`。包清单的 `library` 字段声明结构版本、参与同步的表和唯一键，以及按键查询的表和返回列。\n\n", m.Data)
@@ -391,9 +429,9 @@ func readme(m manifest, usage string) string {
 		out.WriteString("先安装 `bmc-package.json` 中声明的成员包。\n\n")
 	}
 	out.WriteString("从仓库根目录在 PowerShell 中打包。\n\n```powershell\n./scripts/pack-release.ps1\n```\n\n")
-	fmt.Fprintf(&out, "在已加载 BMCShell 的 Bash 中安装当前目录并验证。\n\n```bash\nbmc plugin install --file .\n%s\n```\n\n", usage)
+	fmt.Fprintf(&out, "在已加载 BMCShell 的 Bash 中安装当前目录并验证。\n\n```bash\nbmc plugin install --file .\n%s\n```\n\n", strings.Join(commands, "\n"))
 	if m.Type == "toolplugin" {
-		base := strings.TrimSuffix(usage, "_global")
+		base := strings.TrimSuffix(commands[0], "_global")
 		out.WriteString("安装工具后重新加载 Bash 适配层，使全局命令生效。选定目标后运行两种会话示例。\n\n")
 		fmt.Fprintf(&out, "```bash\nbmc use 192.0.2.10\n%s_session\n%s_shell\nbmc exit\n```\n\n", base, base)
 		out.WriteString("会话 EXE（`_session`）和 Bash（`_shell`）通过清单中的 `envReads` 声明相同的依赖。框架提供必选的 `BMCSHELL_TARGET_IP` 和可选的 `BMCSHELL_TARGET_MODEL`。如需在成功结束后向框架提交会话变量，使用 `envWrites` 声明写入范围。\n\n")

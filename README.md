@@ -34,7 +34,7 @@ pwsh -File ./tests/Test-Book.ps1 -BmcExe 'D:\tools\BMCShell.exe'
 ## 打包脚手架
 
 ```powershell
-pwsh -File ./scripts/pack-release.ps1 -Version 3.0.0-dev.4
+pwsh -File ./scripts/pack-release.ps1 -Version 3.0.0-dev.5
 ```
 
 Windows x64 归档与 SHA256 清单默认输出到 `dist/`。第三方许可见 [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)。项目许可证由权利人确认。

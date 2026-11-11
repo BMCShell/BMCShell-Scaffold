@@ -10,19 +10,19 @@ func main() {
 	entry := os.Getenv("BMCSHELL_ENTRY")
 	switch {
 	case strings.HasSuffix(entry, "_global"):
-		fmt.Println("BMCShell global tool is ready.")
+		fmt.Println("BMCShell 全局工具已就绪。")
 	case strings.HasSuffix(entry, "_session"):
 		ip := os.Getenv("BMCSHELL_TARGET_IP")
 		if ip == "" {
-			fmt.Fprintln(os.Stderr, "Select a BMC with bmc use first.")
+			fmt.Fprintln(os.Stderr, "请先用 bmc use 选定 BMC。")
 			os.Exit(1)
 		}
-		fmt.Println("Current BMC:", ip)
+		fmt.Printf("当前 BMC：%s\n", ip)
 		if model := os.Getenv("BMCSHELL_TARGET_MODEL"); model != "" {
-			fmt.Println("Model:", model)
+			fmt.Printf("型号：%s\n", model)
 		}
 	default:
-		fmt.Fprintln(os.Stderr, "Run the registered command through BMCShell.")
+		fmt.Fprintln(os.Stderr, "请通过 BMCShell 运行已注册的工具命令。")
 		os.Exit(2)
 	}
 }

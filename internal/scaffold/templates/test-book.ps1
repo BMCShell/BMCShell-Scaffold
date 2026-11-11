@@ -1,3 +1,12 @@
+<#
+.SYNOPSIS
+    在临时数据目录安装工具书，验证列表、帮助、搜索、详情和版本命令。
+.PARAMETER BmcExe
+    必填。用于测试的 BMCShell.exe 路径。
+.EXAMPLE
+    ./scripts/test-book.ps1 -BmcExe ../BMCShell/build/BMCShell.exe
+#>
+
 #requires -Version 7.4
 [CmdletBinding()]
 param(
@@ -52,4 +61,4 @@ try {
     Remove-Item -LiteralPath $testHome.FullName -Recurse -Force
 }
 
-Write-Output "Book $bookName 测试通过。"
+Write-Output "工具书 $bookName 测试通过。"

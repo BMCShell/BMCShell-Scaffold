@@ -43,7 +43,7 @@ CREATE TABLE _bmcshell_library (
   schema_version INTEGER NOT NULL,
   data_version TEXT NOT NULL
 );
-CREATE TABLE records (key TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE records (device_id TEXT NOT NULL PRIMARY KEY, display_name TEXT NOT NULL);
 PRAGMA user_version = 1;
 `
 
@@ -75,7 +75,7 @@ func createLibrary(path, id string) error {
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec("INSERT INTO records (key, value) VALUES (?, ?)", "DEMO01", "示例设备 A")
+		_, err = tx.Exec("INSERT INTO records (device_id, display_name) VALUES (?, ?)", "DEMO01", "示例设备 A")
 		return err
 	})
 }

@@ -1,3 +1,14 @@
+<#
+.SYNOPSIS
+    校验扩展包清单及资源，生成扩展 ZIP 和 SHA-256 校验清单。
+.DESCRIPTION
+    工具包应先构建 bin/tool.exe。发布文件包含清单声明的资源。
+.PARAMETER OutputDirectory
+    输出目录，默认使用扩展包项目的 dist。
+.EXAMPLE
+    ./scripts/pack-release.ps1 -OutputDirectory ./dist
+#>
+
 #requires -Version 7.4
 [CmdletBinding()]
 param(
@@ -11,26 +22,26 @@ $files = [System.Collections.Generic.Dictionary[string, string]]::new([StringCom
 
 function Add-ReleaseFile([string] $Entry, [string] $Extension = '') {
     if ([string]::IsNullOrWhiteSpace($Entry) -or ($Extension -and -not $Entry.EndsWith($Extension, [StringComparison]::OrdinalIgnoreCase))) {
-        throw "Invalid package file '$Entry'. Expected extension '$Extension'."
+        throw "扩展包文件 '$Entry' 无效。要求的扩展名为 '$Extension'。"
     }
     $path = $repo
     foreach ($part in $Entry.Split('/')) {
         $base = ($part.Split('.')[0]).TrimEnd(' ')
         if ($part -in '', '.', '..', '.git', 'dist' -or $part -match '[<>:"\\|?*~\p{Cc}]' -or $part -match '[. ]$' -or
             $base -match '^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$') {
-            throw "Unsafe package path '$Entry'."
+            throw "扩展包路径 '$Entry' 不符合要求。"
         }
         $path = Join-Path $path $part
         $item = Get-Item -LiteralPath $path -Force
         if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw "Package paths must not use links: '$Entry'."
+            throw "扩展包路径不能使用链接：'$Entry'。"
         }
     }
     if ($item -isnot [IO.FileInfo]) {
-        throw "Expected a file: '$Entry'."
+        throw "路径必须指向文件：'$Entry'。"
     }
     if ($files.ContainsKey($Entry)) {
-        if ($Entry -cnotin $files.Keys) { throw "Conflicting archive entry '$Entry'." }
+        if ($Entry -cnotin $files.Keys) { throw "ZIP 条目名称冲突：'$Entry'。" }
         return $files[$Entry]
     }
     $files.Add($Entry, $item.FullName)
@@ -41,21 +52,21 @@ function Assert-WindowsX64([string] $Path) {
     $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($Path))
     try {
         if ($reader.BaseStream.Length -lt 64 -or $reader.ReadUInt16() -ne 0x5A4D) {
-            throw "Expected a Windows executable: $Path"
+            throw "文件必须是 Windows 可执行程序：$Path"
         }
         $reader.BaseStream.Position = 0x3C
         $peOffset = $reader.ReadInt32()
         if ($peOffset -lt 64 -or $peOffset -gt ($reader.BaseStream.Length - 24)) {
-            throw "Invalid executable header: $Path"
+            throw "可执行文件头无效：$Path"
         }
         $reader.BaseStream.Position = $peOffset
         if ($reader.ReadUInt32() -ne 0x4550 -or $reader.ReadUInt16() -ne 0x8664) {
-            throw "Expected a Windows x64 executable: $Path"
+            throw "文件必须是 Windows x64 可执行程序：$Path"
         }
         $reader.BaseStream.Position = $peOffset + 22
         $characteristics = $reader.ReadUInt16()
         if (-not ($characteristics -band 0x0002) -or ($characteristics -band 0x2000)) {
-            throw "Expected an executable program: $Path"
+            throw "文件必须是可运行的程序：$Path"
         }
     } finally {
         $reader.Dispose()
@@ -66,7 +77,7 @@ function Assert-SqliteDatabase([string] $Path) {
     $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($Path))
     try {
         if ([Text.Encoding]::ASCII.GetString($reader.ReadBytes(16)) -cne "SQLite format 3`0") {
-            throw "Expected a SQLite database: $Path"
+            throw "文件必须是 SQLite 数据库：$Path"
         }
     } finally {
         $reader.Dispose()
@@ -79,7 +90,7 @@ if ($package -isnot [System.Collections.IDictionary] -or $package.schema -ne 1 -
     $package.id -cnotmatch '\A[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\z' -or
     $package.version -cnotmatch '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z' -or
     $package.type -cnotin 'toolplugin', 'book', 'library', 'theme', 'bundle') {
-    throw 'Invalid package ID, version, type, schema, or core API.'
+    throw '扩展包的 id、version、type、schema 或 coreApi 无效。'
 }
 Assert-PackageIdentity $package $repo
 $null = Add-ReleaseFile 'README.md'
@@ -116,7 +127,7 @@ switch ($package.type) {
             switch -CaseSensitive ($entry.runtime ?? '') {
                 { $_ -cin '', 'native' } { Assert-WindowsX64 (Add-ReleaseFile $entry.entry '.exe') }
                 'bash' { $null = Add-ReleaseFile $entry.entry '.sh' }
-                default { throw "Unsupported tool runtime '$($entry.runtime)'." }
+                default { throw "不支持工具运行时 '$($entry.runtime)'。" }
             }
         }
         foreach ($entry in $package.provides.resolvers.Values) {
@@ -135,7 +146,7 @@ $baseName = if ($package.Contains('shortName')) {
 $archivePath = Join-Path $output "$baseName.zip"
 $manifestPath = Join-Path $output "$baseName.manifest.json"
 if ((Test-Path -LiteralPath $archivePath) -or (Test-Path -LiteralPath $manifestPath)) {
-    throw 'This package version already exists. Choose a new version or output directory.'
+    throw '该版本的扩展包已存在。请使用新版本号或其他输出目录。'
 }
 
 $stagingName = [guid]::NewGuid().ToString('N')

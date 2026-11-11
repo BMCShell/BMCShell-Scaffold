@@ -36,7 +36,7 @@ func TestBookProjectTemplate(t *testing.T) {
 
 	t.Run("manifest", func(t *testing.T) {
 		var got manifest
-		if err := json.Unmarshal(readBookProjectFile(t, root, "bmc-package.json"), &got); err != nil {
+		if err := json.Unmarshal(readProjectFile(t, root, "bmc-package.json"), &got); err != nil {
 			t.Fatal(err)
 		}
 		if got.Schema != 1 || got.CoreAPI != 1 || got.ID != id {
@@ -58,11 +58,22 @@ func TestBookProjectTemplate(t *testing.T) {
 		var help struct {
 			Topics map[string]topic `json:"topics"`
 		}
-		if err := json.Unmarshal(readBookProjectFile(t, root, "help.json"), &help); err != nil {
+		if err := json.Unmarshal(readProjectFile(t, root, "help.json"), &help); err != nil {
 			t.Fatal(err)
 		}
 		bookHelp := help.Topics["package"]
-		readme := string(readBookProjectFile(t, root, "README.md"))
+		readme := string(readProjectFile(t, root, "README.md"))
+		for _, syntax := range []string{
+			"bmc book api-demo [-l|--list]",
+			"bmc book api-demo -s <关键词>",
+			"bmc book api-demo [--id] <ID>",
+			"bmc book api-demo --name <完整名称>",
+			"bmc book api-demo [-v|--version]",
+		} {
+			if !slices.Contains(bookHelp.Usage, syntax) {
+				t.Errorf("topics.package.usage missing %q: %v", syntax, bookHelp.Usage)
+			}
+		}
 		for _, command := range []string{
 			"bmc book api-demo -l",
 			"bmc book api-demo -s '示例'",
@@ -70,8 +81,8 @@ func TestBookProjectTemplate(t *testing.T) {
 			"bmc book api-demo 1",
 			"bmc book api-demo --name '示例条目'",
 		} {
-			if !slices.Contains(bookHelp.Usage, command) {
-				t.Errorf("topics.package.usage missing %q: %v", command, bookHelp.Usage)
+			if !slices.ContainsFunc(bookHelp.Examples, func(item example) bool { return item.Command == command }) {
+				t.Errorf("topics.package.examples missing %q", command)
 			}
 			if !strings.Contains(readme, "\n"+command+"\n") {
 				t.Errorf("README missing command %q", command)
@@ -87,7 +98,7 @@ func TestBookProjectTemplate(t *testing.T) {
 				}
 			}
 		}
-		readBookProjectFile(t, root, "tests/Test-Book.ps1")
+		readProjectFile(t, root, "tests/Test-Book.ps1")
 	})
 
 	t.Run("sqlite", func(t *testing.T) {
@@ -144,7 +155,7 @@ func TestBookProjectTemplate(t *testing.T) {
 	})
 }
 
-func readBookProjectFile(t *testing.T, root, rel string) []byte {
+func readProjectFile(t *testing.T, root, rel string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 	if err != nil {

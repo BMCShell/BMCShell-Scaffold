@@ -85,10 +85,17 @@ type example struct {
 	Description string `json:"description"`
 }
 
+type option struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
 type topic struct {
 	Summary  string    `json:"summary"`
 	Usage    []string  `json:"usage"`
+	Options  []option  `json:"options,omitempty"`
 	Examples []example `json:"examples"`
+	Notes    []string  `json:"notes,omitempty"`
 }
 
 type release struct {
@@ -115,7 +122,7 @@ func CreateNamed(options NamedOptions) (Result, error) {
 		return Result{}, err
 	}
 	if !versionRE.MatchString(options.Version) {
-		return Result{}, fmt.Errorf("invalid package version %q", options.Version)
+		return Result{}, fmt.Errorf("包版本 %q 无效。请使用 1.0.0 这样的语义化版本", options.Version)
 	}
 	displayName := strings.TrimSpace(options.DisplayName)
 	if displayName == "" {
@@ -244,7 +251,7 @@ func blueprint(m manifest, id, slug string, members []string) (manifest, map[str
 	if m.Type != "bundle" && len(members) != 0 {
 		return m, nil, errors.New("--member 仅用于 bundle")
 	}
-	var usage string
+	var packageTopic topic
 	switch m.Type {
 	case "toolplugin":
 		m.Summary = "演示全局命令和会话命令。"
@@ -261,10 +268,10 @@ func blueprint(m manifest, id, slug string, members []string) (manifest, map[str
 			session:      {Scope: "session", Entry: "bin/tool.exe", EnvReads: reads},
 			shellSession: {Scope: "session", Entry: "tool/session.sh", Runtime: "bash", EnvReads: reads},
 		}}
-		topics["tool."+global] = commandTopic("运行全局示例。", global)
-		topics["tool."+session] = commandTopic("运行会话示例并显示当前目标。", session)
-		topics["tool."+shellSession] = commandTopic("使用 Bash 读取同一组会话变量。", shellSession)
-		usage = global
+		topics["tool."+global] = commandTopic("检查全局工具是否已注册。", global, "在当前 Bash 中运行全局工具。", "安装后需重新加载 Bash 适配层。")
+		topics["tool."+session] = commandTopic("用原生程序显示当前目标 IP 和可用的型号。", session, "显示当前目标。", "先用 bmc use 选定目标。")
+		topics["tool."+shellSession] = commandTopic("用 Bash 显示当前目标 IP 和可用的型号。", shellSession, "显示当前目标。", "先用 bmc use 选定目标。")
+		packageTopic = topics["tool."+global]
 	case "book":
 		m.Summary = "查询 SQLite 工具书中的示例条目。"
 		dataName := m.ShortName
@@ -273,18 +280,33 @@ func blueprint(m manifest, id, slug string, members []string) (manifest, map[str
 		}
 		m.Data = "book/" + dataName + ".book.db"
 	case "library":
-		m.Summary = "可按键查询和同步的 SQLite 数据库示例。"
+		m.Summary = "可查看、编辑和同步的 SQLite 设备数据示例。"
 		m.Data = "library/" + slug + ".library.db"
 		m.Library = &libraryContract{
 			SchemaVersion: 1,
-			Tables:        []libraryTable{{Name: "records", Keys: []string{"key"}}},
-			Lookup:        libraryLookup{Table: "records", Value: "value"},
+			Tables: []libraryTable{{
+				Name:        "records",
+				Keys:        []string{"device_id"},
+				ViewColumns: []string{"device_id", "display_name"},
+				Fields: map[string]libraryField{
+					"device_id":    {Description: "设备编号", Type: "text", Required: true},
+					"display_name": {Description: "设备名称", Type: "text", Required: true, Pattern: `\S`},
+				},
+			}},
 		}
-		usage = "bmc library query " + id + " DEMO01"
+		name := m.ShortName
+		if name == "" {
+			name = "'" + strings.ReplaceAll(m.Name, "'", "'\"'\"'") + "'"
+		}
+		packageTopic = commandTopic(m.Summary, "bmc library "+name, "打开菜单查看和维护本地设备记录。", "新增、修改和删除会写入本地工作库。")
 	case "theme":
 		m.Summary = "显示当前 BMC 目标的提示符主题示例。"
 		m.Data = "themes/theme.json"
-		usage = "bmc setting --set theme.active " + id
+		name := m.Name
+		if m.ShortName == "" {
+			name = id
+		}
+		packageTopic = commandTopic(m.Summary, "bmc setting --set theme.active "+name, "启用该提示符主题。", "在交互式 Bash 中选定目标后查看效果。")
 	case "bundle":
 		m.Summary = "按 UUID 组合多个已安装的扩展。"
 		if len(members) == 0 {
@@ -299,7 +321,7 @@ func blueprint(m manifest, id, slug string, members []string) (manifest, map[str
 			seen[member] = true
 			m.Members = append(m.Members, member)
 		}
-		usage = "bmc plugin show " + id
+		packageTopic = commandTopic(m.Summary, "bmc plugin list bundle", "列出 Bundle 包。", "安装前需备齐清单声明的成员包。")
 	default:
 		return m, nil, fmt.Errorf("未知插件类型 %q", m.Type)
 	}
@@ -307,15 +329,20 @@ func blueprint(m manifest, id, slug string, members []string) (manifest, map[str
 		m.Summary = *m.Description
 	}
 	if m.Type == "book" {
-		topics["package"] = bookTopic(m)
-	} else {
-		topics["package"] = commandTopic(m.Summary, usage)
+		packageTopic = bookTopic(m)
 	}
+	packageTopic.Summary = m.Summary
+	topics["package"] = packageTopic
 	return m, topics, nil
 }
 
-func commandTopic(summary, usage string) topic {
-	return topic{Summary: summary, Usage: []string{usage}, Examples: []example{{Command: usage, Description: summary}}}
+func commandTopic(summary, command, description, note string) topic {
+	return topic{
+		Summary:  summary,
+		Usage:    []string{command},
+		Examples: []example{{Command: command, Description: description}},
+		Notes:    []string{note},
+	}
 }
 
 func bookTopic(m manifest) topic {
@@ -332,16 +359,34 @@ func bookTopic(m manifest) topic {
 		{Command: command + " 1", Description: "用位置参数按 ID 查看正文。"},
 		{Command: command + " --name '示例条目'", Description: "按完整名称查看正文。"},
 	}
-	result := topic{Summary: m.Summary, Examples: examples}
-	for _, item := range examples {
-		result.Usage = append(result.Usage, item.Command)
+	return topic{
+		Summary: m.Summary,
+		Usage: []string{
+			command + " [-l|--list]",
+			command + " -s <关键词>",
+			command + " [--id] <ID>",
+			command + " --name <完整名称>",
+			command + " [-v|--version]",
+		},
+		Options: []option{
+			{Name: "-l, --list", Description: "列出索引。省略查询参数时也会列出索引。"},
+			{Name: "-s, --search <关键词>", Description: "按名称搜索条目。"},
+			{Name: "--id <ID>", Description: "按 ID 查看正文，也可直接传入 ID。"},
+			{Name: "--name <完整名称>", Description: "按完整名称查看正文。"},
+			{Name: "-v, --version", Description: "查看工具书版本。"},
+		},
+		Examples: examples,
+		Notes:    []string{"查询在本地完成，无需选定或连接 BMC。"},
 	}
-	return result
 }
 
 func populate(root string, m manifest, topics map[string]topic) error {
+	commands := make([]string, 0, len(topics["package"].Examples))
+	for _, item := range topics["package"].Examples {
+		commands = append(commands, item.Command)
+	}
 	files := map[string][]byte{
-		"README.md":                  []byte(readme(m, topics["package"].Usage)),
+		"README.md":                  []byte(readme(m, commands)),
 		".gitignore":                 []byte("/dist/\n/bin/\n"),
 		"scripts/pack-release.ps1":   packScript,
 		"scripts/check-identity.ps1": identityScript,
@@ -423,13 +468,16 @@ func readme(m manifest, commands []string) string {
 		out.WriteString("在 PowerShell 中运行工具书测试。测试使用独立的 `BMCSHELL_HOME` 安装并验证示例查询。替换 SQLite 示例数据后，同步更新 `tests/Test-Book.ps1` 中的预期结果。\n\n```powershell\npwsh -File ./tests/Test-Book.ps1 -BmcExe 'D:\\tools\\BMCShell.exe'\n```\n\n")
 	}
 	if m.Type == "library" {
-		fmt.Fprintf(&out, "使用 SQLite 工具编辑 `%s`。包清单的 `library` 字段声明结构版本、参与同步的表和唯一键，以及按键查询的表和返回列。\n\n", m.Data)
+		fmt.Fprintf(&out, "使用 SQLite 工具编辑 `%s`。示例表 `records` 以 `device_id` 为稳定键，`display_name` 保存设备名称。包清单用 `viewColumns` 声明可查看的列，用 `fields` 声明字段说明和写入规则。\n\n", m.Data)
 	}
 	if m.Type == "bundle" {
 		out.WriteString("先安装 `bmc-package.json` 中声明的成员包。\n\n")
 	}
 	out.WriteString("从仓库根目录在 PowerShell 中打包。\n\n```powershell\n./scripts/pack-release.ps1\n```\n\n")
 	fmt.Fprintf(&out, "在已加载 BMCShell 的 Bash 中安装当前目录并验证。\n\n```bash\nbmc plugin install --file .\n%s\n```\n\n", strings.Join(commands, "\n"))
+	if m.Type == "library" {
+		out.WriteString("在管理菜单选择查看记录，输入设备编号 `DEMO01` 查看示例。\n\n")
+	}
 	if m.Type == "toolplugin" {
 		base := strings.TrimSuffix(commands[0], "_global")
 		out.WriteString("安装工具后重新加载 Bash 适配层，使全局命令生效。选定目标后运行两种会话示例。\n\n")
